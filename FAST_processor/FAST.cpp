@@ -1,24 +1,30 @@
+/*How does this work:
+
+  1.The system waits for packets on the reception path, handling metadata and buffering packet data for decoding.
+  
+  2.Upon receiving complete packet data (either in one or two parts), the system decodes the FAST message into 
+  an order and handles it accordingly.
+  
+  3.On the transmission side, the system encodes orders into FAST protocol messages and prepares them for network 
+  transmission in AXI word structures.
+  
+  4.The entire process is managed through state machines that ensure correct sequencing of operations and handling 
+  of network protocols.*/
+
 #include "FAST.h"
 #include "decoder.h"
 #include "encoder.h"
 
-#define PORT 641
+#define PORT 49152//Dynamic port
 
-#define STOP_BIT    0x80
-#define VALID_DATA  0x7F
-#define SIGN_BIT    0x40
-
-#define NUMBER_OF_VALID_BITS_IN_BYTE    7
-
-#define pow(x,y)  exp(y*log(x))
-
-#define PRICE_FIELD_EXPO    0
-#define PRICE_FIELD_MAN     1
-#define SIZE_FIELD_NUM      2
-#define ORDER_ID_FIELD      3
-#define TYPE_FIELD_NUM      4
-
-void handleIncomingPacket(hls::stream<axiWord>& lbRxDataIn, hls::stream<metadata>& lbRxMetadataIn, hls::stream<ap_uint<64> >& tagsIn, hls::stream<ap_uint<64> >& time_to_book, hls::stream<metadata>& metadata_to_book, ap_uint<64>& first_packet, fast_protocol::Rx_State& next_state) {
+// Handles the initial processing of incoming network packets.
+void handleIncomingPacket(hls::stream<axiWord>& lbRxDataIn, //incoming packet data
+                          hls::stream<metadata>& lbRxMetadataIn, //incoming packet metadata
+                          hls::stream<ap_uint<64> >& tagsIn, //incomg tags
+                          hls::stream<ap_uint<64> >& time_to_book, //pass the time information forward
+                          hls::stream<metadata>& metadata_to_book, //pass the metadata forward
+                          ap_uint<64>& first_packet, //store the first part of packet
+                          fast_protocol::Rx_State& next_state) {//reference to a variable hoding next state
     // Pass-through for time
     time_to_book.write(tagsIn.read());
 
@@ -27,31 +33,45 @@ void handleIncomingPacket(hls::stream<axiWord>& lbRxDataIn, hls::stream<metadata
     sockaddr_in tempSocket = tempMetadata.sourceSocket;
     tempMetadata.sourceSocket = tempMetadata.destinationSocket;
     tempMetadata.destinationSocket = tempSocket;
+    
+    // Writes the modified metadata to the metadata_to_book stream for further use.
     metadata_to_book.write(tempMetadata);
 
     // Buffer input packet for later use by the decoder
     axiWord tempWord = lbRxDataIn.read();
+    
+    // Stores the data part of the axiWord to the first_packet variable for later use by the decoder.
     first_packet = tempWord.data;
 
-    // Decide next state based on whether the current packet is marked as the last packet
+    // Determines the next state of the receiver based on whether the current packet is the last packet.
+    // If the last flag is set in the tempWord, indicating this is the last packet of the current message,
+    // the next state is set to PROCESS_PACKET, signaling that the packet is ready to be processed.
+    // Otherwise, the state is set to READ_SECOND, indicating that more data for the current packet is expected.
     next_state = tempWord.last ? PROCESS_PACKET : READ_SECOND;
 }
 
+// This function processes a packet by first preparing the encoded message array
+// from two parts of the split packet and then decoding it to extract the order information.
 void processPacket(ap_uint<8> encoded_message[MESSAGE_BUFF_SIZE], ap_uint<64>& first_packet, ap_uint<64>& second_packet, hls::stream<order>& order_to_book) {
-    // Assuming Fast_Decoder::decode_message is a static method capable of decoding the message
-    // and populating an 'order' structure. Adjust accordingly if your implementation differs.
-
-    // Prepare the encoded message array from the packets
-    for (unsigned i = 0; i < NUM_BYTES_IN_PACKET; i++) {
+    
+    // Loop through the bytes of the first and second parts of the split packet.
+    // For each byte, extract it by shifting the packet content and mask out the high bits.
+    // The encoded message is reconstructed from both parts of the packet.
+     for (unsigned i = 0; i < NUM_BYTES_IN_PACKET; i++) {
+        // Extract each byte from the first packet and store it in the encoded message array.
         encoded_message[i] = first_packet >> (BYTE * i);
+        // Do the same for the second packet, offsetting the index to store it after the first packet's data.
         encoded_message[i + NUM_BYTES_IN_PACKET] = second_packet >> (BYTE * i);
     }
 
-    // Decode the message
-   order decoded_order;
+    // Instantiate an 'order' structure to hold the decoded message.
+    order decoded_order;
+    // Decode the message from the first and second packets into 'decoded_order'.
+    // Fast_Decoder::decode_message is assumed to be capable of handling the decoding logic.
     Fast_Decoder::decode_message(first_packet, second_packet, decoded_order);
 
-    // Write the decoded order to the output stream
+    // If the 'order_to_book' stream is not full, write the decoded order to it.
+    // This makes the decoded order available for further processing downstream.
     if (!order_to_book.full()) {
         order_to_book.write(decoded_order);
     }
@@ -62,7 +82,7 @@ void preparePackets(const ap_uint<8> encoded_message[MESSAGE_BUFF_SIZE], axiWord
     first_packet.data = 0;
     second_packet.data = 0;
     first_packet.keep = 0xFF; // Assuming all bytes are valid for simplicity
-    second_packet.keep = 0xFF; // Adjust based on actual message size
+    second_packet.keep = 0xFF; 
 
     // Load the first part of the encoded message into first_packet.data
     for (int i = 0; i < 8; i++) { // Assuming 8 bytes per axiWord
@@ -149,7 +169,7 @@ void encodeOrderToMessage( order& decoded_message, ap_uint<8> encoded_message[ME
     for (int i = 0; i < 8; i++) {
         encoded_message[i + 8] = second_packet.range(8 * i + 7, 8 * i);}
 }
-//helper functions of txPath
+
 void encodeOrderToMessage(const order& decoded_message, ap_uint<8> encoded_message[MESSAGE_BUFF_SIZE]);
 uint16_t calculatePacketLength(const axiWord& packet);
 
@@ -210,7 +230,7 @@ uint16_t calculatePacketLength(const axiWord& packet) {
     return length * 8; // Length in bits
 }
 
-void fast_protocol_ns(hls::stream<axiWord>& lbRxDataIn,
+void Fast_processor(hls::stream<axiWord>& lbRxDataIn,
                    hls::stream<metadata>& lbRxMetadataIn,
                    hls::stream<ap_uint<16> >& lbRequestPortOpenOut,
                    hls::stream<bool>& lbPortOpenReplyIn,

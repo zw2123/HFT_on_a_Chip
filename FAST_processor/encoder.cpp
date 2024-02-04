@@ -83,43 +83,51 @@ void Fast_Encoder::encode_decimal_from_fix16(fix16 & decoded_fix16,
                                              unsigned & mantissa_offset,
                                              uint8 encoded_message[MESSAGE_BUFF_SIZE])
 {
-    // encode exponent
-    encoded_message[exponent_offset] = 0xF8; // exponent is always -8
+    // Encode the exponent for the fixed-point number, setting it to a predefined value (-8) to represent decimal scaling
+    encoded_message[exponent_offset] = 0xF8; // exponent is always -8, Fixed exponent value to adjust decimal places
 
-    // Define the scale factor as a fixed-point constant
-   const ap_fixed<16, 8> scaleFactor = 100000000; // Equivalent of pow(10, 8), directly as fixed-point
+
+    // Multiply the decoded fixed-point number by a scale factor to convert it into an integer mantissa
+   const ap_fixed<16, 8> scaleFactor = 100000000; // Scale factor to convert the fixed-point number
    mantissa_t mantissa = static_cast<mantissa_t>(decoded_fix16 * scaleFactor);
+   // Encode the scaled mantissa as a signed integer
    encode_signed_int(encoded_message, mantissa_offset, mantissa);
 }
 
 const unsigned MANTISSA_NUM_ENCODING_BYTES = 4;
-
+// Function to encode the mantissa of a decimal number into the FAST protocol format
 void Fast_Encoder::encode_signed_int(uint8 encoded_message[MESSAGE_BUFF_SIZE],
                                      unsigned & mantissa_offset,
                                      ap_int<MANTISSA_SIZE> mantissa)
 {
-
+    // Loop to encode each byte of the mantissa, leaving the most significant bit (MSB) for the stop bit
     for (unsigned i = 0; i < MANTISSA_NUM_ENCODING_BYTES - 1; i++)
     {
         #pragma HLS UNROLL
+        // Shift and mask the mantissa to encode 7 bits at a time
         encoded_message[mantissa_offset++] = (mantissa >> (FAST_VALID_BITS * (MANTISSA_NUM_ENCODING_BYTES - 1 - i)) & 0x7F);
     }
+    // Encode the last byte with the stop bit set to indicate the end of the mantissa field
     encoded_message[mantissa_offset++] = (0x80 | (mantissa & 0x7F));
 }
 
+// Function to encode a 32-bit unsigned integer into the FAST protocol format
 void Fast_Encoder::encode_uint_from_uint32(uint32 & decoded_uint32,
                                            unsigned & message_offset,
                                            uint8 encoded_message[MESSAGE_BUFF_SIZE])
 {
-    bool triggered = false;
-    unsigned max_bytes_need_for_uint32 = 5;
+    bool triggered = false;// Flag to start encoding once a non-zero byte is found
+    unsigned max_bytes_need_for_uint32 = 5;// Maximum bytes needed to encode a 32-bit number
 
+    // Loop to encode the 32-bit unsigned integer, excluding leading zeros
     for (unsigned i = 0; i < max_bytes_need_for_uint32 - 1; i++)
     {
         #pragma HLS UNROLL
+        // Shift and mask the integer to encode 7 bits at a time
         uint8 curr_byte = (decoded_uint32 >> (FAST_VALID_BITS * (max_bytes_need_for_uint32 - 1 - i))) & 0x7F;
         if (curr_byte != 0x00 || triggered)
         {
+            // Once a non-zero byte is encountered, set the triggered flag and encode the byte
             encoded_message[message_offset++] = curr_byte;
             triggered = true;
         }
@@ -127,20 +135,25 @@ void Fast_Encoder::encode_uint_from_uint32(uint32 & decoded_uint32,
     encoded_message[message_offset++] = (0x80 | (decoded_uint32 & 0x7F));
 }
 
+// Function to encode an 8-bit unsigned integer into the FAST protocol format
 void Fast_Encoder::encode_uint_from_uint8(uint8 & decoded_uint8,
                                           unsigned & message_offset,
                                           uint8 encoded_message[MESSAGE_BUFF_SIZE])
 {
+    // Check if the most significant bit (MSB) is set, which requires an additional encoding byte
     if ((decoded_uint8 & 0x80) == 0x80)
     {
         encoded_message[message_offset++] = 0x01;
     }
+    // Encode the 8-bit integer with the stop bit set
     encoded_message[message_offset++] = (0x80 | (decoded_uint8 & 0x7F));
 }
 
+// Function to encode a 2-bit unsigned integer into the FAST protocol format
 void Fast_Encoder::encode_uint_from_uint2(ap_uint<2> & decoded_uint2,
                                           unsigned & message_offset,
                                           uint8 encoded_message[MESSAGE_BUFF_SIZE])
 {
+    // Encode the 2-bit integer with the stop bit set to indicate the end of this field
     encoded_message[message_offset++] = (0x80 | decoded_uint2);
 }

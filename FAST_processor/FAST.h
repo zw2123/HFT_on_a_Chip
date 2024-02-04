@@ -69,7 +69,7 @@ struct order {
     uint3 type;
 };
 
-void fast_protocol(hls::stream<axiWord>& lbRxDataIn,
+void Fast_processor(hls::stream<axiWord>& lbRxDataIn,
                    hls::stream<metadata>& lbRxMetadataIn,
                    hls::stream<ap_uint<16> >& lbRequestPortOpenOut,
                    hls::stream<bool>& lbPortOpenReplyIn,
