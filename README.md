@@ -1,4 +1,4 @@
-Please be aware: the project targets Alveo U50 Acceleration Card, before building the project, make sure you have added the board in  Vivado, here is how you can add a board, and here is how to get started wit Alveo U50.
+Please be aware: the project targets Alveo U50 Acceleration Card, before building the project, make sure you have added the board in  Vivado, here is how you can add a board, and [here] (https://www.xilinx.com/products/boards-and-kits/alveo/u50.html#vitis) is how to get started wit Alveo U50.
 
 Please move to the project folder before building and running:
 
