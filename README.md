@@ -16,7 +16,7 @@ Step 1 and 2:
    For FAST processor,run: vitis_hls -f FAST_processor.tcl
    
 The latency after co-sim are (10ns clock period):
-  Trading logic:94-125 ns;
+  Trading logic: 94-125 ns;
   Order book: 350-400 ns;
   Fast processor: 300ns.
 
