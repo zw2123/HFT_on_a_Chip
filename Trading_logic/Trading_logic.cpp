@@ -24,7 +24,6 @@
 #include <cmath>
 #include <ap_fixed.h>
 
-// Enhanced trading strategy parameters
 const int shortTermPeriod = 5;
 const int longTermPeriod = 20;
 const int rsiPeriod = 14; // Period for RSI calculation
@@ -120,7 +119,7 @@ order createOrder(const order& bid, const order& ask, bool buy) {
     newOrder.price = buy ? bid.price : ask.price;
     newOrder.size = buy ? bid.size : ask.size;
     newOrder.orderID = buy ? bid.orderID : ask.orderID;
-    newOrder.direction = buy ? 1 : 0;  // Assuming 1 for buy, 0 for sell
+    newOrder.direction = buy ? 1 : 0;  
     return newOrder;
 }
 
@@ -140,8 +139,8 @@ void trading_logic(stream<order> &top_bid, stream<order> &top_ask,
         updateRSI((bid.price + ask.price) / 2, rsi, updateCounter);
 
         // Define trading conditions based on SMA and RSI
-        bool smaCondition = (shortTermSMA_out > longTermSMA_out); // Example condition: short-term SMA above long-term SMA
-        bool rsiCondition = (rsi_out > 30 && rsi_out < 70); // Example condition: RSI not in the oversold or overbought zone
+        bool smaCondition = (shortTermSMA_out > longTermSMA_out); //  condition: short-term SMA above long-term SMA
+        bool rsiCondition = (rsi_out > 30 && rsi_out < 70); // condition 2: RSI not in the oversold or overbought zone
 
         // Execute trade if bid price >= ask price and all additional conditions are met
         if (bid.price >= ask.price && smaCondition && rsiCondition) {
