@@ -8,7 +8,7 @@ using namespace std;
 using namespace hls;
 
 string directionToString(ap_uint<3> direction) {
-    switch (direction.to_uint()) { // Convert ap_uint to unsigned int for comparison
+    switch (direction.to_uint()) { 
         case 2: return "ASK";
         case 3: return "BID";
         case 4: return "REMOVE_ASK";
@@ -154,7 +154,6 @@ int main() {
         while (!outgoing_time.empty()) { outgoing_time.read(); }
         while (!outgoing_meta.empty()) { outgoing_meta.read(); }
 
-        // Display the test case result, including the test values and whether data was read from each stream
         std::cout << "Test Case " << i + 1 << ":\n";
         std::cout << "Price: " << test.price << ", Size: " << test.size << ", Order ID: " << test.orderID << ", Direction: " << directionToString(test.direction) << "\n";
         std::cout << "Expected Top Bid ID: " << expected_top_bid_ids[i] << ", Actual: " << (read_top_bid ? std::to_string(top_bid_id) : "No Data") << "\n";
@@ -163,7 +162,6 @@ int main() {
         std::cout << "Result: " << ((correct_bid && correct_ask) ? "Correct" : "Incorrect") << "\n\n";
     }
 
-    // Display correction rate and total latency
     double correction_rate = static_cast<double>(correct_predictions) / 20 * 100;
     std::cout << "Correction Rate: " << correction_rate << "%\n";
     return 0;

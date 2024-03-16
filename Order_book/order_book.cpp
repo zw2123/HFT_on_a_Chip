@@ -20,7 +20,7 @@
   
 #include "order_book.hpp"
 
-// No changes needed for these utility functions as they are already optimized
+
 int log_base_2(unsigned index){
 // Directly access a read-only memory (ROM) with precomputed log base 2 values
 #pragma HLS INLINE
@@ -54,7 +54,6 @@ unsigned calculate_index(int insert_path, int level, int idx){
     return (insert_path >> level) & 1 ? (2*idx) + 1 : 2*idx;
 }
 
-// No significant changes needed for left_child and right_child functions
 order& left_child(unsigned level, unsigned index, order queue[LEVELS][CAPACITY/2]){
     #pragma HLS INLINE
     return queue[level+1][index*2];
@@ -64,11 +63,10 @@ order& right_child(unsigned level, unsigned index, order queue[LEVELS][CAPACITY/
     #pragma HLS INLINE
     return queue[level+1][(index*2) + 1];
 }
-// Manual swap function adapted for 'order' struct
+// Manual swap function 
 void swapOrders(order &a, order &b) {
     // Swap each member individually
     // Swap the price, size, orderID, and direction between two orders
-    // The `ap_ufixed` and `ap_uint` are datatypes provided by Xilinx for FPGA development
 
     //swap for price
     ap_ufixed<16, 8> tempPrice = a.price;
