@@ -11,13 +11,9 @@
   3.The encoded data is carefully assembled into larger packets for transmission, adhering to the requirements of 
   the FAST protocol and the needs of high-frequency trading systems.*/
 #include "encoder.h"
-#include <ap_fixed.h> 
+#include <ap_fixed.h>
+#include <cstdint> 
 
-#define STOP_BIT 	0x80
-#define VALID_DATA	0x7F
-#define SIGN_BIT	0x40
-
-#define NUMBER_OF_VALID_BITS_IN_BYTE	7
 
 #define pow(x,y)  exp(y*log(x))
 
@@ -27,140 +23,123 @@
 #define ORDER_ID_FIELD_NUM		3
 #define TYPE_FIELD_NUM			4
 
-void Fast_Encoder::encode_fast_message(order & decoded_message,
-                                       uint64 & first_packet,
-                                       uint64 & second_packet)
-{
-
-    ap_uint<8> encoded_message[MESSAGE_BUFF_SIZE] = { 0. };
-#pragma HLS ARRAY_PARTITION variable=encoded_message complete dim=1
-
-    encoded_message[0] = 0xFC; // Presence map: all fields are present.
-    encoded_message[1] = 0x81; // template id = 1
-    encoded_message[2] = 0x80; // exponent is always 0
-    encoded_message[3] = 0x81; //price is always 1
-
-    unsigned message_offset = 4;
-    if ((decoded_message.size & 0x80) == 0x80)
-    {
-        encoded_message[message_offset++] = 0x01;
-    }
-
-    encoded_message[message_offset++] = (0x80 | (decoded_message.size & 0x7F));
-
-//    Fast_Encoder::encode_uint_from_uint8(decoded_message.size,
-//                                         message_offset,
-//                                         encoded_message);
-    bool triggered = false; //triggered
-
-    unsigned max_bytes_need_for_uint32 = 5;
-    for (unsigned i = 0; i < max_bytes_need_for_uint32 - 1; i++)
-    {
-        uint8 curr_byte = (0x00
-                | (decoded_message.orderID
-                        >> NUMBER_OF_VALID_BITS_IN_BYTE
-                                * (max_bytes_need_for_uint32 - 1 - i) & 0x7F));
-        if (curr_byte != 0x00 || triggered == true)
-        {
-            encoded_message[message_offset++] = (0x00
-                    | (decoded_message.orderID
-                            >> NUMBER_OF_VALID_BITS_IN_BYTE
-                                            * (max_bytes_need_for_uint32 - 1 - i)
-                                    & 0x7F));
-            triggered = true;
+void encode_generic_integer(uint64_t value, unsigned& offset, ap_uint<8>* encoded_message, bool has_stop_bit = true) {
+    bool is_non_zero_found = false;
+    #pragma HLS INLINE // Suggest inlining to reduce function call overhead
+    for (int byte_index = 4; byte_index >= 0; --byte_index) {
+        #pragma HLS UNROLL factor=2 // Partial unrolling to balance between speed and resource usage
+        ap_uint<8> byte = (value >> (byte_index * 7)) & VALID_DATA2;
+        if (byte != 0 || is_non_zero_found || byte_index == 0) {
+            if (byte_index == 0 && has_stop_bit) {
+                byte |= STOP_BIT2;
+            }
+            encoded_message[offset++] = byte;
+            is_non_zero_found = true;
         }
     }
-
-    encoded_message[message_offset++] = (0x80 | (decoded_message.orderID & 0x7F));
-//    Fast_Encoder::encode_uint_from_uint32(decoded_message.orderID,
-//                                          message_offset,
-//                                          encoded_message);
-    encoded_message[message_offset++] = (0x80 | decoded_message.type);
-//    Fast_Encoder::encode_uint_from_uint2(decoded_message.type,
-//                                         message_offset,
-//                                         encoded_message);
-
-    for (int i = NUM_BYTES_IN_PACKET - 1; i >= 0; i--)
-    {
-        first_packet = (first_packet << BYTE)
-                | encoded_message[i];
-        second_packet = (second_packet << BYTE)
-                | encoded_message[i + NUM_BYTES_IN_PACKET];
-    }
-
 }
 
-void Fast_Encoder::encode_decimal_from_fix16(fix16 & decoded_fix16,
+// Function to encode an 8-bit unsigned integer into the encoded_message array.
+void Fast_Encoder::encodeUintFromUint8(ap_uint<8> decoded_uint8, unsigned& message_offset, ap_uint<8>* encoded_message) {
+    // Directly use the utility function assuming ap_uint<8> can be implicitly cast to uint64_t
+    #pragma HLS INLINE
+    encode_generic_integer(decoded_uint8.to_uint(), message_offset, encoded_message);
+}
+
+// Function to encode a 32-bit unsigned integer into the encoded_message array.
+void Fast_Encoder::encodeUintFromUint32(ap_uint<32> decoded_uint32, unsigned& message_offset, ap_uint<8>* encoded_message) {
+    // Convert ap_uint<32> to uint64_t for processing
+    #pragma HLS INLINE
+    encode_generic_integer(decoded_uint32.to_uint64(), message_offset, encoded_message);
+}
+
+// Function to encode a 2-bit unsigned integer (stored in an ap_uint<3> for convenience) into the encoded_message array.
+void Fast_Encoder::encodeUintFromUint2(ap_uint<3> decoded_uint2, unsigned& message_offset, ap_uint<8>* encoded_message) {
+    // Convert ap_uint<3> to uint64_t for processing. Only the lower 2 bits are valid for encoding.
+    #pragma HLS INLINE
+    encode_generic_integer(decoded_uint2.to_uint64() & 0x03, message_offset, encoded_message);
+}
+
+void Fast_Encoder::encode_fast_message(const order& decoded_message,
+                                       uint64_t& first_packet,
+                                       uint64_t& second_packet) {
+    #pragma HLS DATAFLOW // Enable concurrent execution where data dependencies allow
+    ap_uint<8> encoded_message[BUFF_SIZE_2] = {0};
+    #pragma HLS ARRAY_PARTITION variable=encoded_message complete dim=1
+
+    // Initializing presence map and template ID
+    encoded_message[0] = 0xFC; // Presence map: all fields are present
+    encoded_message[1] = 0x81; // template id = 1
+    encoded_message[2] = 0x80; // exponent is always 0
+    encoded_message[3] = 0x81; // price is always 1
+
+    unsigned message_offset = 4;
+    Fast_Encoder::encodeUintFromUint8(decoded_message.size, message_offset, encoded_message);
+    Fast_Encoder::encodeUintFromUint32(decoded_message.orderID, message_offset, encoded_message);
+    Fast_Encoder::encodeUintFromUint2(decoded_message.type, message_offset, encoded_message);
+
+    // Packing the encoded message into first_packet and second_packet
+    first_packet = 0;
+    second_packet = 0;
+    for (int i = BYTES_IN_PACK - 1; i >= 0; --i) {
+        #pragma HLS UNROLL // Fully unroll this loop for maximum throughput
+        first_packet = (first_packet << 8) | encoded_message[i];
+        second_packet = (second_packet << 8) | encoded_message[i + BYTES_IN_PACK];
+    }
+}
+
+// Encoding a decimal value from a fixed-point number
+void Fast_Encoder::encode_decimal_from_fix16(const fix16& decoded_fix16,
                                              unsigned exponent_offset,
-                                             unsigned & mantissa_offset,
-                                             uint8 encoded_message[MESSAGE_BUFF_SIZE])
-{
-    // encode exponent
+                                             unsigned& mantissa_offset,
+                                             uint8_t encoded_message[BUFF_SIZE_2]) {
+    // Encode exponent
     encoded_message[exponent_offset] = 0xF8; // exponent is always -8
 
-    // encode mantissa
-    mantissa_t mantissa = (float) decoded_fix16 * pow(10, 8);
+    // Encode mantissa
+    int64_t mantissa = static_cast<int64_t>(static_cast<float>(decoded_fix16) * std::pow(10, 8));
     encode_signed_int(encoded_message, mantissa_offset, mantissa);
 }
 
-void Fast_Encoder::encode_signed_int(uint8 encoded_message[MESSAGE_BUFF_SIZE],
-                                     unsigned & mantissa_offset,
-                                     mantissa_t mantissa)
-{
-    for (unsigned i = 0; i < MANTISSA_NUM_ENCODING_BYTES - 1; i++)
-    {
-        encoded_message[mantissa_offset++] = (0x00
-                | (mantissa
-                        >> NUMBER_OF_VALID_BITS_IN_BYTE
-                                * (MANTISSA_NUM_ENCODING_BYTES - 1 - i) & 0x7F));
-    }
-
-    encoded_message[mantissa_offset++] = (0x80 | (mantissa & 0x7F));
-}
-
-void Fast_Encoder::encode_uint_from_uint32(uint32 & decoded_uint32,
-                                           unsigned & message_offset,
-                                           uint8 encoded_message[MESSAGE_BUFF_SIZE])
-{
-    bool triggered = false; //triggered
-
-    unsigned max_bytes_need_for_uint32 = 5;
-    for (unsigned i = 0; i < max_bytes_need_for_uint32 - 1; i++)
-    {
-        uint8 curr_byte = (0x00
-                | (decoded_uint32
-                        >> NUMBER_OF_VALID_BITS_IN_BYTE
-                                * (max_bytes_need_for_uint32 - 1 - i) & 0x7F));
-        if (curr_byte != 0x00 || triggered == true)
-        {
-            encoded_message[message_offset++] = (0x00
-                    | (decoded_uint32
-                            >> NUMBER_OF_VALID_BITS_IN_BYTE
-                                            * (max_bytes_need_for_uint32 - 1 - i)
-                                    & 0x7F));
-            triggered = true;
+// Generic encoding functions for integers with variable length encoding
+void encode_generic_integer(uint64_t value, unsigned& offset, uint8_t encoded_message[BUFF_SIZE_2], bool has_stop_bit = true) {
+    bool is_non_zero_found = false;
+    for (int byte_index = 4; byte_index >= 0; --byte_index) {
+        uint8_t byte = (value >> (byte_index * 7)) & VALID_DATA2;
+        if (byte != 0 || is_non_zero_found || byte_index == 0) {
+            if (byte_index == 0 && has_stop_bit) {
+                byte |= STOP_BIT2;
+            }
+            encoded_message[offset++] = byte;
+            is_non_zero_found = true;
         }
     }
-
-    encoded_message[message_offset++] = (0x80 | (decoded_uint32 & 0x7F));
-
 }
 
-void Fast_Encoder::encode_uint_from_uint8(uint8 & decoded_uint8,
-                                          unsigned & message_offset,
-                                          uint8 encoded_message[MESSAGE_BUFF_SIZE])
-{
-    if ((decoded_uint8 & 0x80) == 0x80)
-    {
-        encoded_message[message_offset++] = 0x01;
+// Simplifying the encoding functions using the generic integer encoding
+void Fast_Encoder::encode_signed_int(uint8_t encoded_message[BUFF_SIZE_2],
+                                     unsigned& mantissa_offset,
+                                     int64_t mantissa) {
+    encode_generic_integer(mantissa, mantissa_offset, encoded_message);
+}
+
+void Fast_Encoder::encode_uint_from_uint32(uint32_t decoded_uint32,
+                                           unsigned& message_offset,
+                                           uint8_t encoded_message[BUFF_SIZE_2]) {
+    encode_generic_integer(decoded_uint32, message_offset, encoded_message);
+}
+
+void Fast_Encoder::encode_uint_from_uint8(uint8_t decoded_uint8,
+                                          unsigned& message_offset,
+                                          uint8_t encoded_message[BUFF_SIZE_2]) {
+    if (decoded_uint8 & SIGN_BIT2) {
+        encoded_message[message_offset++] = 0x01; // Indicate that the high bit was set
     }
-
-    encoded_message[message_offset++] = (0x80 | (decoded_uint8 & 0x7F));
+    encoded_message[message_offset++] = STOP_BIT2 | (decoded_uint8 & VALID_DATA2);
 }
 
-void Fast_Encoder::encode_uint_from_uint2(uint3 & decoded_uint2,
-                                          unsigned & message_offset,
-                                          uint8 encoded_message[MESSAGE_BUFF_SIZE])
-{
-    encoded_message[message_offset++] = (0x80 | decoded_uint2);
+void Fast_Encoder::encode_uint_from_uint2(uint8_t decoded_uint2,
+                                          unsigned& message_offset,
+                                          uint8_t encoded_message[BUFF_SIZE_2]) {
+    encoded_message[message_offset++] = STOP_BIT2 | (decoded_uint2 & 0x03); // Only 2 bits are valid, thus masking with 0x03
 }

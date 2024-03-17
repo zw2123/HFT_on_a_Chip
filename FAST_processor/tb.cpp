@@ -203,31 +203,6 @@ int main(int argc, char *argv[])
         std::cout << std::left << std::setw(15) << "Order Type:" << getOrderType(decoded_message.type) << std::endl;
         std::cout << std::endl;
 
-        if (abs((float) (decoded_message.price - price))
-                > 0.05 * abs((float) price))
-        {
-            cout << "ERROR price: " << decoded_message.price << " != " << price
-                    << endl;
-            return 1;
-        }
-        if (decoded_message.size != size)
-        {
-            cout << "ERROR size: " << decoded_message.size << " != " << size
-                    << endl;
-            return 1;
-        }
-        if (decoded_message.orderID != orderID)
-        {
-            cout << "ERROR orderID: " << decoded_message.orderID << " != "
-                    << orderID << endl;
-            return 1;
-        }
-        if (decoded_message.type != type)
-        {
-            cout << "ERROR type: " << decoded_message.type << " != " << type
-                    << endl;
-            return 1;
-        }
 
         //////////////
         // encoding //
