@@ -21,107 +21,111 @@
   market volatility and transaction costs.*/
   
 #include "Trading_logic.hpp"
-#include <cmath>
 #include <ap_fixed.h>
+#include <algorithm> 
+
+// Define fixed-point types for optimized arithmetic operations
+using fixed_t = ap_fixed<16, 4>; // Adjust these parameters based on the required precision and range
+using fixed_t_large = ap_fixed<32, 8>; // For calculations that require a larger range or more precision
 
 const int shortTermPeriod = 5;
 const int longTermPeriod = 20;
-const int rsiPeriod = 14; // Period for RSI calculation
-const float upperRsiThreshold = 70.0; // Overbought threshold for RSI
-const float lowerRsiThreshold = 30.0; // Oversold threshold for RSI
-const float maxRiskPerTrade = 0.02; // Maximum risk per trade as a percentage of total capital
+const int rsiPeriod = 14;
 
-// Initialize moving averages, RSI, and volatility measurement
-float shortTermSMA = 0.0;
-float longTermSMA = 0.0;
-float rsi = 50.0; // Starting RSI in the middle range
-float volatilityIndex = 0.0;
+// Thresholds and constants defined as fixed-point for consistency
+const fixed_t upperRsiThreshold = 70.0;
+const fixed_t lowerRsiThreshold = 30.0;
+const fixed_t maxRiskPerTrade = 0.02;
+const fixed_t tradeThresholdMultiplier = 1.1;
+const fixed_t volatilityThreshold = 0.05;
 
-// Trade execution thresholds
-const float tradeThresholdMultiplier = 1.1;
-const float volatilityThreshold = 0.05;
+// Use fixed-point types for all variables to maintain consistency and optimize FPGA resource usage
+fixed_t shortTermSMA = 0.0;
+fixed_t longTermSMA = 0.0;
+fixed_t rsi = 50.0; // Starting RSI in the middle range
+fixed_t volatilityIndex = 0.0;
 
-// Mock parameters for demonstration
-float totalCapital = 100000.0; // Mock total capital for risk management calculation
+fixed_t totalCapital = 100000.0; // Use fixed-point for capital representation
 
-// Update Moving Averages
-void updateMovingAverages(float price, float &shortTermSMA, float &longTermSMA, int &updateCounter) {
-    static float shortTermPrices[shortTermPeriod] = {0};
-    static float longTermPrices[longTermPeriod] = {0};
+// Optimized moving average calculation using fixed-point arithmetic
 
+
+void updateMovingAverages(fixed_t price, fixed_t &shortTermSMA, fixed_t &longTermSMA, int &updateCounter) {
+    #pragma HLS INLINE off
+    static fixed_t shortTermPrices[shortTermPeriod] = {};
+    static fixed_t longTermPrices[longTermPeriod] = {};
+    static fixed_t_large shortSum = 0, longSum = 0; // Now static to maintain state across calls
+
+    #pragma HLS ARRAY_PARTITION variable=shortTermPrices complete dim=1
+    #pragma HLS ARRAY_PARTITION variable=longTermPrices complete dim=1
+
+    // Update running sums by subtracting the oldest value and adding the new one
+    if (updateCounter >= shortTermPeriod) { // Ensure we have filled the array before subtracting
+        shortSum -= shortTermPrices[updateCounter % shortTermPeriod];
+    }
     shortTermPrices[updateCounter % shortTermPeriod] = price;
+    shortSum += price;
+
+    if (updateCounter >= longTermPeriod) {
+        longSum -= longTermPrices[updateCounter % longTermPeriod];
+    }
     longTermPrices[updateCounter % longTermPeriod] = price;
+    longSum += price;
 
-    float shortSum = 0.0, longSum = 0.0;
-    for(int i = 0; i < shortTermPeriod; ++i) {
-        shortSum += shortTermPrices[i];
+    // Update the SMAs
+    if (updateCounter >= shortTermPeriod - 1) { // Start calculating average after array is first filled
+        shortTermSMA = shortSum / shortTermPeriod;
     }
-    for(int i = 0; i < longTermPeriod; ++i) {
-        longSum += longTermPrices[i];
+    if (updateCounter >= longTermPeriod - 1) {
+        longTermSMA = longSum / longTermPeriod;
     }
-    shortTermSMA = shortSum / shortTermPeriod;
-    longTermSMA = longSum / longTermPeriod;
 
-    updateCounter++; // Ensure this counter is incremented elsewhere if not in a looping call
+    updateCounter++;
 }
 
-// Update RSI
-void updateRSI(float price, float &rsi, int &updateCounter) {
-    static float previousPrice = price;  // Initialize with the first price
-    static float totalGain = 0;
-    static float totalLoss = 0;
-    static float averageGain = 0;
-    static float averageLoss = 0;
+using fixed_t = ap_fixed<16, 4>; // Adjust based on required precision and range
+using fixed_t_large = ap_fixed<32, 8>; // For larger range calculations
 
-    float gain = 0;
-    float loss = 0;
-    float change = price - previousPrice;
+// Updated updateRSI function
+void updateRSI(fixed_t price, fixed_t &rsi, int &updateCounter) {
+   #pragma HLS INLINE off
+    static fixed_t previousPrice = price; // Initialization assumes first call provides the initial price
+    static fixed_t_large totalGain = 0, totalLoss = 0;
+    static fixed_t averageGain = 0, averageLoss = 0;
 
-    if (updateCounter > 0) {  // Skip the first update to avoid self-comparison
-        gain = std::max(change, 0.0f);
-        loss = std::max(-change, 0.0f);
-    }
+    fixed_t change = price - previousPrice;
+    fixed_t gain = (change > 0) ? change : fixed_t(0); // Explicitly cast to fixed_t to avoid ambiguity
+    fixed_t loss = (change < 0) ? fixed_t(-change) : fixed_t(0);
 
+    #pragma HLS PIPELINE
     if (updateCounter < rsiPeriod) {
-        // Accumulate sums for the initial SMA calculation
         totalGain += gain;
         totalLoss += loss;
-        if (updateCounter == rsiPeriod - 1) {
-            averageGain = totalGain / rsiPeriod;
-            averageLoss = totalLoss / rsiPeriod;
-        }
     } else {
-        // Apply EMA formula
-        averageGain = (gain * (2.0f / (1 + rsiPeriod))) + averageGain * (1 - (2.0f / (1 + rsiPeriod)));
-        averageLoss = (loss * (2.0f / (1 + rsiPeriod))) + averageLoss * (1 - (2.0f / (1 + rsiPeriod)));
+        averageGain = ((rsiPeriod - 1) * averageGain + gain) / rsiPeriod;
+        averageLoss = ((rsiPeriod - 1) * averageLoss + loss) / rsiPeriod;
     }
 
-    // Calculate RSI
-    if (averageLoss == 0) {
-        rsi = 100;
-    } else {
-        float rs = averageGain / averageLoss;
-        rsi = 100 - (100 / (1 + rs));
-    }
+   fixed_t rs = averageLoss != fixed_t(0) ? fixed_t(averageGain / averageLoss) : fixed_t(0);
 
-    previousPrice = price;  // Update the previous price for the next call
+
+    rsi = 100 - (100 / (1 + rs));
+
+    previousPrice = price;
     updateCounter++;
 }
 
 
-// Calculate Volatility Index
-float calculateVolatilityIndex(float shortTermSMA, float longTermSMA) {
-    return fabs(shortTermSMA - longTermSMA) / longTermSMA;
+order createOrder(const order& bid, const order& ask, bool buy) {
+    // Direct initialization reduces unnecessary logic and operations
+    return order{
+        .price = buy ? bid.price : ask.price,
+        .size = buy ? bid.size : ask.size,
+        .orderID = buy ? bid.orderID : ask.orderID,
+        .direction = buy ? 1 : 0
+    };
 }
 
-order createOrder(const order& bid, const order& ask, bool buy) {
-    order newOrder;
-    newOrder.price = buy ? bid.price : ask.price;
-    newOrder.size = buy ? bid.size : ask.size;
-    newOrder.orderID = buy ? bid.orderID : ask.orderID;
-    newOrder.direction = buy ? 1 : 0;  
-    return newOrder;
-}
 
 void trading_logic(stream<order> &top_bid, stream<order> &top_ask,
                       stream<Time> &incoming_time, stream<metadata> &incoming_meta,
@@ -129,31 +133,29 @@ void trading_logic(stream<order> &top_bid, stream<order> &top_ask,
                       stream<metadata> &outgoing_meta, ap_ufixed<16,8> &shortTermSMA_out, 
                       ap_ufixed<16,8> &longTermSMA_out, ap_ufixed<16,8> &rsi_out) {
 
+    #pragma HLS INLINE off
+    #pragma HLS PIPELINE
+
     static int updateCounter = 0;
 
-    if (!top_bid.empty() && !top_ask.empty()) {
+    if (!top_bid.empty() && !top_ask.empty() && !outgoing_order.full()) {
         order bid = top_bid.read();
         order ask = top_ask.read();
 
+        // Assuming updateMovingAverages and updateRSI are optimized for parallel execution
         updateMovingAverages((bid.price + ask.price) / 2, shortTermSMA, longTermSMA, updateCounter);
         updateRSI((bid.price + ask.price) / 2, rsi, updateCounter);
 
-        // Define trading conditions based on SMA and RSI
-        bool smaCondition = (shortTermSMA_out > longTermSMA_out); //  condition: short-term SMA above long-term SMA
-        bool rsiCondition = (rsi_out > 30 && rsi_out < 70); // condition 2: RSI not in the oversold or overbought zone
+        bool tradeCondition = bid.price >= ask.price && (shortTermSMA_out > longTermSMA_out) && (rsi_out > 30 && rsi_out < 70);
 
-        // Execute trade if bid price >= ask price and all additional conditions are met
-        if (bid.price >= ask.price && smaCondition && rsiCondition) {
+        if (tradeCondition && !incoming_time.empty() && !incoming_meta.empty() && !outgoing_time.full() && !outgoing_meta.full()) {
             order tradeOrder = createOrder(bid, ask, true);
-            if (!outgoing_order.full()) {
-                outgoing_order.write(tradeOrder);
-                if (!incoming_time.empty() && !incoming_meta.empty() && !outgoing_time.full() && !outgoing_meta.full()) {
-                    Time t = incoming_time.read();
-                    metadata m = incoming_meta.read();
-                    outgoing_meta.write(m);
-                    outgoing_time.write(t);
-                }
-            }
+            outgoing_order.write(tradeOrder);
+            
+            Time t = incoming_time.read();
+            metadata m = incoming_meta.read();
+            outgoing_meta.write(m);
+            outgoing_time.write(t);
         }
     }
 
@@ -161,4 +163,3 @@ void trading_logic(stream<order> &top_bid, stream<order> &top_ask,
     longTermSMA_out = longTermSMA;
     rsi_out = rsi;
 }
-
